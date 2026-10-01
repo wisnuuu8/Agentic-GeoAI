@@ -20,6 +20,13 @@ class DataLahan(BaseModel):
     Potassium: float
     Carbon: float
 
+@app.get("/")
+def home():
+    return {
+        "pesan": "Selamat datang di API Orbitani ML!",
+        "status": "Server Aktif dan Siap Digunakan 🚀"
+    }
+
 @app.post("/prediksi")
 def prediksi_pupuk(data: DataLahan):
     input_df = pd.DataFrame([data.dict()])
