@@ -1,59 +1,67 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 import joblib
 import pandas as pd
 import os
 
-app = FastAPI(title="API ML on Vercel")
+app = FastAPI(title="Fertilizer Recommendation API")
 
-# Load model Random Forest dari root directory
-model_path = os.path.join(os.path.dirname(__file__), "../model_rf.pkl")
-try:
-    model = joblib.load(model_path)
-except Exception as e:
-    model = None
+# Load model dan kolom saat server menyala
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(BASE_DIR, "..", "fertilizer_rf_model.pkl")
+columns_path = os.path.join(BASE_DIR, "..", "model_columns.pkl")
 
-class DataLahan(BaseModel):
+model = joblib.load(model_path)
+model_columns = joblib.load(columns_path)
+
+# Definisikan format input HANYA berdasarkan parameter angka dari Anda
+class FarmInput(BaseModel):
     Temperature: float
     Moisture: float
-    Rainfall: float
+    Rainfall: float = 0.0
     PH: float
     Nitrogen: float
     Phosphorous: float
     Potassium: float
-    Carbon: float
-
-    # Validator pintar: otomatis mengonversi string angka dari Power Automate menjadi float
-    @field_validator('*', mode='before')
-    @classmethod
-    def parse_numeric(cls, v):
-        if isinstance(v, str):
-            try:
-                return float(v.strip())
-            except ValueError:
-                raise ValueError(f"Nilai '{v}' gagal dikonversi menjadi angka.")
-        return v
+    Carbon: float = 0.0
 
 @app.get("/")
 def home():
-    return {
-        "pesan": "Selamat datang di API ML!",
-        "status": "Server Aktif dan Siap Digunakan"
-    }
+    return {"message": "Fertilizer AI API is running successfully!"}
 
-@app.post("/prediksi")
-def prediksi_pupuk(data: DataLahan):
-    if model is None:
-        raise HTTPException(status_code=500, detail="File model ML tidak ditemukan di server.")
-    
-    # Menggunakan kompatibilitas model_dump (Pydantic v2) atau dict (Pydantic v1)
-    input_dict = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
-    input_df = pd.DataFrame([input_dict])
-    
-    # Eksekusi prediksi model Random Forest
-    hasil_prediksi = model.predict(input_df)
-    
-    return {
-        "status": "sukses",
-        "rekomendasi_pupuk": str(hasil_prediksi[0])
-    }
+@app.post("/predict")
+def predict_fertilizer(data: FarmInput):
+    try:
+        # Mapping parameter angka, dan berikan nilai default untuk kategori (misal: 'Loamy', 'Wheat', 'Kharif')
+        # agar struktur 39 kolom One-Hot Encoding tetap terpenuhi dengan baik.
+        mapped_data = {
+            'Soil_Type': 'Loamy',          # Nilai default kategori tanah
+            'Crop_Type': 'Rice',          # Nilai default jenis tanaman
+            'Season': 'Kharif',           # Nilai default musim
+            'Soil_pH': data.PH,                     
+            'Nitrogen_Level': data.Nitrogen,        
+            'Phosphorus_Level': data.Phosphorous,   
+            'Potassium_Level': data.Potassium,      
+            'Soil_Moisture': data.Moisture,         
+            'Temperature': data.Temperature,
+            'Rainfall': data.Rainfall,
+        }
+        
+        # 1. Ubah dictionary menjadi DataFrame
+        df_input = pd.DataFrame([mapped_data])
+        
+        # 2. Lakukan One-Hot Encoding
+        df_encoded = pd.get_dummies(df_input)
+        
+        # 3. Reindex agar kolomnya pas 39 buah sesuai model_columns.pkl
+        df_final = df_encoded.reindex(columns=model_columns, fill_value=0)
+        
+        # 4. Lakukan Prediksi
+        prediction = model.predict(df_final)
+        
+        return {
+            "status": "success",
+            "recommended_fertilizer": prediction[0]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
